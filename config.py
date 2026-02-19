@@ -49,7 +49,7 @@ BODY_CLEANING_INLINE = {
         r"I tuoi preferiti Salva questo articolo e leggilo quando vuoi\.[^.]*Corriere News\.?",
         r"Registrati in 1 minuto Accedi Hai salvato un nuovo articolo Trovi tutti gli articoli salvati nella tua area personale nella sezione preferiti e sull'app Corriere News\.?",
         r"Blocco navale alla Seawatch di Carola Rackete:[^.]*senza parole\s*",
-        r"La newsletter Diario Politico[^.]*Basta cliccare qui\s*\.?\s*",
+        r"La newsletter Diario Politico[\s\S]*?Basta cliccare qui\s*\.?\s*",
         r"\d{1,2} febbraio 2026\s*(\( modifica il \d{1,2} febbraio \d{4} \| \d{2}:\d{2}\))?",
         r"© RIPRODUZIONE RISERVATA[^.]*INVIA\s*",
         r"Partecipa alla discussione Caratteri rimanenti \d+ INVIA\s*",
@@ -80,3 +80,8 @@ MAX_ARTICLES_PER_FEED = 10
 
 # Secondi di pausa tra una richiesta HTTP e l'altra
 REQUEST_DELAY_SECONDS = 1.5
+
+# Title quote validation: fuzzy match thresholds (0-1)
+FUZZY_MATCH_THRESHOLD_SUSPECT = 0.85  # 85% similarity -> suspect
+FUZZY_MATCH_THRESHOLD_TRUE = 0.95  # 95% similarity -> true
+TITLE_QUOTE_VALIDATION_CSV = "data/title_quote_validation.csv"
