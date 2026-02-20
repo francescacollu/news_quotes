@@ -75,6 +75,9 @@ BODY_CLEANING_INLINE = {
 DATA_DIR = "data"
 OUTPUT_CSV = "data/articoli.csv"
 
+# URL path segments that identify non-article pages (video, podcast, gallery); skipped at fetch
+NON_ARTICLE_URL_PATH_SEGMENTS = ("videogallery", "podcast", "fotogallery")
+
 # Limite articoli per feed (None = nessun limite)
 MAX_ARTICLES_PER_FEED = 10
 
@@ -84,4 +87,8 @@ REQUEST_DELAY_SECONDS = 1.5
 # Title quote validation: fuzzy match thresholds (0-1)
 FUZZY_MATCH_THRESHOLD_SUSPECT = 0.85  # 85% similarity -> suspect
 FUZZY_MATCH_THRESHOLD_TRUE = 0.95  # 95% similarity -> true
+# Semantic (embedding) similarity above this -> suspect (paraphrase)
+SEMANTIC_PARAPHRASE_THRESHOLD = 0.60
 TITLE_QUOTE_VALIDATION_CSV = "data/title_quote_validation.csv"
+# Minimum body length (chars) to include article in title-quote validation; shorter = subscriber-only catenaccio
+MIN_BODY_LENGTH = 400

@@ -1,11 +1,13 @@
 """
-Build visualizations from title-quote validation, quotes review, and articles CSVs.
+Build visualizations from title-quote validation and articles CSVs.
 Outputs a single interactive HTML dashboard.
+quotes_review.csv is optional; charts use only articoli and validation.
 """
 import argparse
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -14,6 +16,7 @@ from config import OUTPUT_CSV, TITLE_QUOTE_VALIDATION_CSV
 
 QUOTES_REVIEW_CSV = "data/quotes_review.csv"
 DEFAULT_OUTPUT = "data/results_dashboard.html"
+OUTCOME_COLUMN = "outcome"
 
 
 def _ensure_file(path: str) -> None:
@@ -23,19 +26,19 @@ def _ensure_file(path: str) -> None:
 
 
 def load_data(data_dir: str = "data"):
-    """Load the three CSVs. Exits if any is missing."""
+    """Load articoli and validation (required). quotes_review is optional."""
     articoli_path = OUTPUT_CSV
     validation_path = TITLE_QUOTE_VALIDATION_CSV
     quotes_path = QUOTES_REVIEW_CSV
-    for p in (articoli_path, validation_path, quotes_path):
+    for p in (articoli_path, validation_path):
         _ensure_file(p)
 
     articoli = pd.read_csv(articoli_path)
     validation = pd.read_csv(validation_path)
-    quotes = pd.read_csv(quotes_path)
+    quotes = pd.read_csv(quotes_path) if os.path.isfile(quotes_path) else pd.DataFrame()
 
-    if articoli.empty and validation.empty and quotes.empty:
-        print("Error: all CSVs are empty.", file=sys.stderr)
+    if articoli.empty and validation.empty:
+        print("Error: articoli and validation CSVs are empty.", file=sys.stderr)
         sys.exit(1)
 
     return articoli, validation, quotes
@@ -43,6 +46,22 @@ def load_data(data_dir: str = "data"):
 
 def _is_true(s: pd.Series) -> pd.Series:
     return s.astype(str).str.lower().eq("true")
+
+
+def _effective_found_in_body(validation: pd.DataFrame) -> pd.Series:
+    """Resolve found_in_body: use manual outcome when set, else automated found_in_body."""
+    if validation.empty or "found_in_body" not in validation.columns:
+        return pd.Series(dtype=bool)
+    auto = _is_true(validation["found_in_body"])
+    if OUTCOME_COLUMN not in validation.columns:
+        return auto
+    outcome = validation[OUTCOME_COLUMN].fillna("").astype(str).str.strip().str.lower()
+    result = auto.copy()
+    result = result.where(outcome == "", result)
+    result = result.mask(outcome == "confirmed_found", True)
+    result = result.mask(outcome == "confirmed_not_found", False)
+    result = result.mask(outcome == "suspect", result)  # leave as-is
+    return result.fillna(auto).astype(bool)
 
 
 def _validation_with_outlet(validation: pd.DataFrame, articoli: pd.DataFrame) -> pd.DataFrame:
@@ -55,11 +74,12 @@ def _validation_with_outlet(validation: pd.DataFrame, articoli: pd.DataFrame) ->
 
 
 def chart_true_quotes_total(validation: pd.DataFrame) -> go.Figure:
-    """Percentage and count of title quotes found in body (true) over total."""
+    """Percentage and count of title quotes found in body (true) over total. Uses manual outcome when set."""
     if validation.empty or "found_in_body" not in validation.columns:
         return go.Figure().add_annotation(text="No data", showarrow=False)
+    effective = _effective_found_in_body(validation)
     total = len(validation)
-    n_true = _is_true(validation["found_in_body"]).sum()
+    n_true = effective.sum()
     pct = 100 * n_true / total if total else 0
     df = pd.DataFrame({"category": ["Found in body (true)", "Not found (false)"], "count": [n_true, total - n_true]})
     fig = px.pie(df, values="count", names="category", title=f"Title quotes found in body: {n_true}/{total} ({pct:.1f}% true)",
@@ -68,11 +88,17 @@ def chart_true_quotes_total(validation: pd.DataFrame) -> go.Figure:
 
 
 def chart_true_quotes_per_outlet(validation: pd.DataFrame, articoli: pd.DataFrame) -> go.Figure:
-    """Stacked bar per outlet: number of true and false (found in body vs not) per outlet."""
+    """Stacked bar per outlet: number of true and false (found in body vs not) per outlet. Uses manual outcome when set."""
     v = _validation_with_outlet(validation, articoli)
     if v.empty:
         return go.Figure().add_annotation(text="No data", showarrow=False)
-    v["found_in_body_label"] = _is_true(v["found_in_body"]).map({True: "true", False: "false"})
+    effective = _effective_found_in_body(validation)
+    v = v.copy()
+    if len(effective) == len(v):
+        eff = effective.values
+    else:
+        eff = _is_true(v["found_in_body"]).values
+    v["found_in_body_label"] = np.where(eff, "true", "false")
     stacked = v.groupby(["source", "found_in_body_label"], dropna=False).size().reset_index(name="count")
     fig = px.bar(stacked, x="source", y="count", color="found_in_body_label", barmode="stack",
                  title="True vs false quotes per outlet (stacked)",

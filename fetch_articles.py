@@ -7,6 +7,8 @@ import logging
 import os
 import re
 import time
+from urllib.parse import urlparse
+
 import feedparser
 import requests
 from bs4 import BeautifulSoup
@@ -15,6 +17,7 @@ from config import (
     CSV_COLUMNS,
     DATA_DIR,
     MAX_ARTICLES_PER_FEED,
+    NON_ARTICLE_URL_PATH_SEGMENTS,
     OUTPUT_CSV,
     REQUEST_DELAY_SECONDS,
     SOURCES,
@@ -83,6 +86,13 @@ def fetch_article(url, source_key):
     return title or "", body or ""
 
 
+def is_non_article_url(url):
+    """True if URL path contains a segment that marks it as non-article (video, podcast, gallery)."""
+    segments = [s for s in urlparse(url).path.split("/") if s]
+    excluded = {s.lower() for s in NON_ARTICLE_URL_PATH_SEGMENTS}
+    return any(seg.lower() in excluded for seg in segments)
+
+
 def run(max_articles_per_feed=None):
     limit = max_articles_per_feed if max_articles_per_feed is not None else MAX_ARTICLES_PER_FEED
     output_path = os.path.join(os.path.dirname(__file__), OUTPUT_CSV)
@@ -106,7 +116,9 @@ def run(max_articles_per_feed=None):
                 link = entry.get("link")
                 if not link:
                     continue
-                # Evita link non-articolo (video, gallery, etc.) se vuoi; per ora tutti
+                if is_non_article_url(link):
+                    logger.info("Skip non-article: %s", link[:70] + "..." if len(link) > 70 else link)
+                    continue
                 title_feed = entry.get("title") or ""
                 date_str = normalize_date(entry)
 

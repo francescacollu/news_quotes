@@ -1,8 +1,13 @@
 """
-Aggrega gli outcome da data/quotes_review.csv (per-quote) e scrive l'outcome
-per articolo in data/articoli.csv.
-Regola: se almeno un quote ha outcome "incorrect" -> articolo "incorrect";
-altrimenti se tutti "correct" -> "correct"; altrimenti "mixed" o "unverifiable".
+Optional/legacy: aggregates per-quote outcomes from data/quotes_review.csv and
+writes article-level outcome to data/articoli.csv.
+
+Use this only if you track quote correctness (verbatim, attribution, context),
+not for title-vs-body matching. The primary workflow is title_quote_validation.csv
+and its optional manual outcome column; the dashboard does not use quotes_review.
+
+Rule: if any quote has outcome "incorrect" -> article "incorrect"; else if all
+"correct" -> "correct"; else "mixed" or "unverifiable".
 """
 import csv
 import logging

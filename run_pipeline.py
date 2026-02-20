@@ -29,9 +29,9 @@ def main():
         help="Skip fetch; run only clean, extract, check (requires existing articoli.csv)",
     )
     parser.add_argument(
-        "--no-review-csv",
+        "--export-review-csv",
         action="store_true",
-        help="Do not export data/quotes_review.csv from extract step",
+        help="Export data/quotes_review.csv from extract step (optional, for per-quote correctness review)",
     )
     args = parser.parse_args()
 
@@ -45,7 +45,7 @@ def main():
     clean_bodies.run()
 
     logger.info("Step 3/4: Extracting quotes...")
-    export_review = None if args.no_review_csv else "data/quotes_review.csv"
+    export_review = "data/quotes_review.csv" if args.export_review_csv else None
     extract_quotes.run(export_review_path=export_review)
 
     logger.info("Step 4/4: Checking title quotes...")

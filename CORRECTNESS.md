@@ -1,40 +1,35 @@
-# Quote correctness: definition and workflow
+# Quote correctness: workflow
 
-## What "correctness" means
+The main goal of this project is to compare **title quote(s)** to the **body** of each article and record whether each title quote has a match in the body (exact or fuzzy). Correctness in that sense is: *does the title quote appear in the body?*
 
-For this project, a quote is considered **correct** if it meets the criteria you choose to apply. Possible meanings (you can adopt one or combine):
+## Primary workflow: title-quote validation
 
-1. **Verbatim**: The quoted text matches the original source (speech, press release, official transcript) word-for-word or with minor punctuation/typo differences.
-2. **Attribution**: The quote is correctly attributed to the person who said it (no misattribution).
-3. **Context**: The quote is not misleading when read in context (e.g. not cherry-picked to invert meaning).
+1. **Run the pipeline**  
+   `python run_pipeline.py`  
+   This fetches articles, cleans bodies, extracts quotes, and writes `data/title_quote_validation.csv` with one row per title quote: `url`, `title_quote`, `found_in_body` (true/false/suspect), `match_type`, `match_similarity`, `match_location`, and `outcome` (empty by default). A row may be marked suspect due to fuzzy (character) similarity or to semantic (paraphrase) similarity; the first run may download the embedding model.
 
-The `outcome` field in the data can be used at **article level** (one label per article) or, if you use the per-quote review file, aggregated from **quote-level** outcomes (see below).
+2. **Optional: manual override**  
+   Open `data/title_quote_validation.csv` and fill the `outcome` column where you want to override or confirm the automated result:
+   - `confirmed_found` – you confirm the title quote is present in the body (counts as found in the dashboard).
+   - `confirmed_not_found` – you confirm it is not present (counts as not found).
+   - `suspect` – leave the automated result as-is but mark for review.
+   - (empty) – not reviewed; the dashboard uses the automated `found_in_body` value.
 
-Suggested values for `outcome`:
+   Re-running the pipeline (e.g. `check_title_quotes.py` or `run_pipeline.py`) preserves your `outcome` values for existing (url, title_quote) rows; new rows get an empty outcome.
 
-- `correct` – all reviewed quotes for this article are correct (or article has no quotes).
-- `incorrect` – at least one quote is wrong (verbatim, attribution, or context).
-- `unverifiable` – no ground truth available to check.
-- `mixed` – some correct, some incorrect or unverifiable.
-- (empty) – not yet reviewed.
+3. **Dashboard and metrics**  
+   `python viz_results.py` builds the HTML dashboard from `data/articoli.csv` and `data/title_quote_validation.csv`. Charts that show "title quotes found in body" use the manual `outcome` when set, otherwise the automated `found_in_body`. The file `data/quotes_review.csv` is not required for the dashboard.
 
-## Workflow
+## Optional secondary workflow: per-quote correctness
 
-1. **Extract quotes** (already done):  
-   `python extract_quotes.py`  
-   This fills `quotes_from_title` and `quotes_from_body` in `data/articoli.csv` and exports `data/quotes_review.csv` with one row per quote (url, quote, source_field, context, outcome).
+If you also want to track **quote correctness** in the sense of verbatim accuracy, attribution, or context (e.g. whether the quote matches the original source or is correctly attributed), that is separate from title-vs-body matching:
 
-2. **Manual review (per quote)**  
-   Open `data/quotes_review.csv` and fill the `outcome` column for each quote: e.g. `correct`, `incorrect`, `unverifiable`.
+1. Run the pipeline with **export of the review file**:  
+   `python run_pipeline.py --export-review-csv`  
+   or run `python extract_quotes.py` (which exports `data/quotes_review.csv` by default when run standalone).
 
-3. **Apply outcomes to articles**  
-   Run:  
-   `python apply_outcomes.py`  
-   This reads `data/quotes_review.csv`, aggregates outcomes by article URL, and writes the article-level `outcome` to `data/articoli.csv` (e.g. "incorrect" if any quote is incorrect, "correct" if all are correct, "mixed" otherwise).
+2. Open `data/quotes_review.csv` and set the `outcome` column per quote: `correct`, `incorrect`, `unverifiable`, or leave empty.
 
-4. **Re-export review file after new extractions**  
-   If you re-run `extract_quotes.py`, it overwrites `data/quotes_review.csv`. To keep manual outcomes, use `apply_outcomes.py` first to push them into `articoli.csv`, or keep a backup of `quotes_review.csv` before re-extracting.
+3. Run `python apply_outcomes.py` to aggregate those outcomes to article level and write the article `outcome` in `data/articoli.csv`.
 
-## Ground truth (optional)
-
-To check **verbatim** correctness you need a primary source (transcript, press release, video). Without it, you can only label attribution and context by editorial judgment, or set outcome to `unverifiable`.
+This workflow is **optional** and not used by the dashboard. It is for analyses that need a single "correct/incorrect" label per article based on verbatim/attribution/context, not on whether the title quote appears in the body.

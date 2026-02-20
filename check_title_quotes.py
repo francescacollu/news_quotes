@@ -12,7 +12,9 @@ from difflib import SequenceMatcher
 from config import (
     FUZZY_MATCH_THRESHOLD_SUSPECT,
     FUZZY_MATCH_THRESHOLD_TRUE,
+    MIN_BODY_LENGTH,
     OUTPUT_CSV,
+    SEMANTIC_PARAPHRASE_THRESHOLD,
     TITLE_QUOTE_VALIDATION_CSV,
 )
 
@@ -21,6 +23,68 @@ logger = logging.getLogger(__name__)
 
 # Minimum length for a title quote to validate (skip noise)
 MIN_TITLE_QUOTE_LEN = 5
+
+# Max characters per segment for semantic encoding (avoid token limit)
+SEMANTIC_SEGMENT_MAX_CHARS = 256
+
+_encoder = None
+
+
+def _get_encoder():
+    """Lazy-load the sentence encoder. Returns None if unavailable."""
+    global _encoder
+    if _encoder is not None:
+        return _encoder
+    try:
+        from sentence_transformers import SentenceTransformer
+        _encoder = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+        return _encoder
+    except Exception as e:
+        logger.warning("Semantic encoder not available, skipping paraphrase check: %s", e)
+        return None
+
+
+def _body_segments(body_text: str, body_quotes: list[str]) -> list[tuple[str, str]]:
+    """Return list of (segment_text, location) for semantic comparison."""
+    segments: list[tuple[str, str]] = []
+    for bq in body_quotes:
+        if bq and bq.strip():
+            seg = bq.strip()[:SEMANTIC_SEGMENT_MAX_CHARS]
+            if seg:
+                segments.append((seg, "quotes_from_body"))
+    if body_text:
+        for sent in re.split(r"[.!?]+", body_text):
+            s = sent.strip()
+            if len(s) >= MIN_TITLE_QUOTE_LEN:
+                segments.append((s[:SEMANTIC_SEGMENT_MAX_CHARS], "body_text"))
+    return segments
+
+
+def _semantic_similarity(
+    title_quote: str,
+    segments_with_location: list[tuple[str, str]],
+) -> tuple[float, str]:
+    """
+    Return (max_cosine_similarity, best_location). (0.0, "") if encoder unavailable or no segments.
+    """
+    if not title_quote or not segments_with_location:
+        return 0.0, ""
+    encoder = _get_encoder()
+    if encoder is None:
+        return 0.0, ""
+    import numpy as np
+    texts = [title_quote] + [t for t, _ in segments_with_location]
+    locations = [""] + [loc for _, loc in segments_with_location]
+    try:
+        emb = encoder.encode(texts, normalize_embeddings=True)
+        q_emb = emb[0 : 1]
+        seg_emb = emb[1:]
+        sims = np.dot(seg_emb, q_emb.T).ravel()
+        idx = int(np.argmax(sims))
+        return float(sims[idx]), locations[1 + idx]
+    except Exception as e:
+        logger.debug("Semantic similarity failed: %s", e)
+        return 0.0, ""
 
 
 def normalize_text(text: str) -> str:
@@ -76,7 +140,7 @@ def find_in_body(
     body_quotes: list[str],
 ) -> dict:
     """
-    Determine if title_quote appears in body (exact, normalized, or fuzzy).
+    Determine if title_quote appears in body (exact, normalized, fuzzy, or paraphrase).
     Return dict: found_in_body, match_type, match_similarity, match_location.
     """
     result = {
@@ -146,7 +210,42 @@ def find_in_body(
         result["match_location"] = best_location
         return result
 
+    # 4) Semantic (paraphrase) check when still false
+    segments_with_location = _body_segments(body_text, body_quotes)
+    sem_sim, sem_location = _semantic_similarity(title_quote, segments_with_location)
+    if sem_sim >= SEMANTIC_PARAPHRASE_THRESHOLD and sem_location:
+        result["found_in_body"] = "suspect"
+        result["match_type"] = "paraphrase"
+        result["match_similarity"] = f"{100 * sem_sim:.1f}"
+        result["match_location"] = sem_location
+        return result
+
     return result
+
+
+# Manual outcome column: confirmed_found, confirmed_not_found, suspect, or empty (not reviewed)
+OUTCOME_COLUMN = "outcome"
+
+
+def _load_existing_outcomes(out_path: str) -> dict[tuple[str, str], str]:
+    """Load existing validation CSV and return (url, title_quote) -> outcome."""
+    existing = {}
+    if not os.path.isfile(out_path):
+        return existing
+    try:
+        with open(out_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            if OUTCOME_COLUMN not in (reader.fieldnames or []):
+                return existing
+            for row in reader:
+                url = row.get("url", "")
+                title_quote = row.get("title_quote", "")
+                outcome = (row.get(OUTCOME_COLUMN) or "").strip()
+                if url and title_quote and outcome:
+                    existing[(url, title_quote)] = outcome
+    except (OSError, csv.Error):
+        pass
+    return existing
 
 
 def run():
@@ -156,6 +255,8 @@ def run():
     if not os.path.isfile(input_path):
         logger.error("File non trovato: %s", input_path)
         return
+
+    existing_outcomes = _load_existing_outcomes(out_path)
 
     validation_rows = []
     stats = {"true": 0, "false": 0, "suspect": 0, "skipped": 0}
@@ -176,6 +277,8 @@ def run():
             except json.JSONDecodeError:
                 body_quotes = []
 
+            if len(body_text) < MIN_BODY_LENGTH:
+                continue
             if not title_quotes:
                 continue
             for q in title_quotes:
@@ -183,6 +286,7 @@ def run():
                     stats["skipped"] += 1
                     continue
                 match_result = find_in_body(q, body_text, body_quotes)
+                outcome = existing_outcomes.get((url, q), "")
                 validation_rows.append({
                     "url": url,
                     "title_quote": q,
@@ -190,6 +294,7 @@ def run():
                     "match_type": match_result["match_type"],
                     "match_similarity": match_result["match_similarity"],
                     "match_location": match_result["match_location"],
+                    OUTCOME_COLUMN: outcome,
                 })
                 status = match_result["found_in_body"]
                 if status == "true":
@@ -200,7 +305,7 @@ def run():
                     stats["false"] += 1
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fieldnames = ["url", "title_quote", "found_in_body", "match_type", "match_similarity", "match_location"]
+    fieldnames = ["url", "title_quote", "found_in_body", "match_type", "match_similarity", "match_location", OUTCOME_COLUMN]
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
