@@ -79,7 +79,7 @@ OUTPUT_CSV = "data/articoli.csv"
 NON_ARTICLE_URL_PATH_SEGMENTS = ("videogallery", "podcast", "fotogallery")
 
 # Limite articoli per feed (None = nessun limite)
-MAX_ARTICLES_PER_FEED = 10
+MAX_ARTICLES_PER_FEED = 30
 
 # Secondi di pausa tra una richiesta HTTP e l'altra
 REQUEST_DELAY_SECONDS = 1.5

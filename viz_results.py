@@ -82,8 +82,8 @@ def chart_true_quotes_total(validation: pd.DataFrame) -> go.Figure:
     n_true = effective.sum()
     pct = 100 * n_true / total if total else 0
     df = pd.DataFrame({"category": ["Found in body (true)", "Not found (false)"], "count": [n_true, total - n_true]})
-    fig = px.pie(df, values="count", names="category", title=f"Title quotes found in body: {n_true}/{total} ({pct:.1f}% true)",
-                 color_discrete_map={"Found in body (true)": "#b8fb3c", "Not found (false)": "#03045e"})
+    fig = px.pie(df, values="count", names="category", title=f"Title quotes found in body: {n_true}/{total} ({pct:.1f}% true)")
+    fig.update_traces(marker=dict(colors=["#B8FB3C", "#03045E"]))
     return fig
 
 
@@ -107,18 +107,23 @@ def chart_true_quotes_per_outlet(validation: pd.DataFrame, articoli: pd.DataFram
     return fig
 
 
-def chart_exact_vs_fuzzy(validation: pd.DataFrame) -> go.Figure:
-    """Percentages of exact vs fuzzy (normalized + fuzzy + none) title-quote matches."""
+def chart_match_type(validation: pd.DataFrame) -> go.Figure:
+    """Pie of match_type: exact, normalized, fuzzy, paraphrase, none."""
     if validation.empty or "match_type" not in validation.columns:
         return go.Figure().add_annotation(text="No data", showarrow=False)
     mt = validation["match_type"].fillna("none").astype(str).str.lower()
-    exact = (mt == "exact").sum()
-    other = len(validation) - exact
-    total = len(validation)
-    pct_exact = 100 * exact / total if total else 0
-    pct_fuzzy = 100 * other / total if total else 0
-    df = pd.DataFrame({"match": ["exact", "fuzzy (other)"], "count": [exact, other], "pct": [pct_exact, pct_fuzzy]})
-    fig = px.pie(df, values="count", names="match", title=f"Exact vs fuzzy: exact {pct_exact:.1f}%, other {pct_fuzzy:.1f}%")
+    order = ["exact", "normalized", "fuzzy", "paraphrase", "none"]
+    counts = mt.value_counts()
+    # ensure all types appear in fixed order, then any other values
+    df = pd.DataFrame({"match_type": order, "count": [counts.get(t, 0) for t in order]})
+    other = counts.drop(labels=order, errors="ignore")
+    if not other.empty:
+        df = pd.concat([df, pd.DataFrame({"match_type": ["other"], "count": [other.sum()]})], ignore_index=True)
+    df = df[df["count"] > 0]
+    if df.empty:
+        return go.Figure().add_annotation(text="No data", showarrow=False)
+    total = df["count"].sum()
+    fig = px.pie(df, values="count", names="match_type", title=f"Match type: exact / normalized / fuzzy / paraphrase / none (n={total})")
     return fig
 
 
@@ -140,7 +145,7 @@ def build_dashboard_html(articoli: pd.DataFrame, validation: pd.DataFrame, quote
     figures = [
         chart_true_quotes_total(validation),
         chart_true_quotes_per_outlet(validation, articoli),
-        chart_exact_vs_fuzzy(validation),
+        chart_match_type(validation),
         chart_articles_with_quotes_by_outlet(validation, articoli),
     ]
     for fig in figures:

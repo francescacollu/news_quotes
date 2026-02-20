@@ -1,0 +1,121 @@
+================================================================================
+WORKFLOW OF THE ANALYSIS - Quotes / Title-quote validation pipeline
+================================================================================
+
+Pipeline entry point: run_pipeline.py
+  Steps: 1) Fetch articles  2) Clean bodies  3) Extract quotes  4) Check title quotes
+  Optional after pipeline: viz_results.py (dashboard)
+
+--------------------------------------------------------------------------------
+STEP 1: Fetch articles
+--------------------------------------------------------------------------------
+Script:        fetch_articles.py
+Libraries:     feedparser, requests, BeautifulSoup (bs4), lxml
+Algorithm:     RSS parsing (feedparser); HTML parsing and CSS selector extraction (BeautifulSoup + lxml)
+
+Feature values (config.py):
+  SOURCES              = per-source feed_url, title_selector, body_selector
+  USER_AGENT           = Mozilla/5.0 ... Chrome/120.0.0.0
+  MAX_ARTICLES_PER_FEED = 10
+  REQUEST_DELAY_SECONDS = 1.5
+  NON_ARTICLE_URL_PATH_SEGMENTS = ("videogallery", "podcast", "fotogallery")
+  TITLE_FALLBACK_SELECTORS = ["h1"]
+  BODY_FALLBACK_SELECTORS  = ["article", "main", "[role='main']"]
+
+Output:        data/articoli.csv (url, source, date, title, body, body_cleaned, quotes_from_title, quotes_from_body, outcome)
+
+--------------------------------------------------------------------------------
+STEP 2: Clean bodies
+--------------------------------------------------------------------------------
+Script:        clean_bodies.py
+Libraries:     csv, re (regex)
+Algorithm:     Rule-based text cleaning:
+  - Truncate at first occurrence of BODY_CLEANING_TRUNCATE_AT (case-insensitive)
+  - Per-source regex removals from BODY_CLEANING_INLINE
+  - Leading title/author strip for Corriere; leading exact title strip
+  - Whitespace normalization
+
+Feature values (config.py):
+  BODY_CLEANING_TRUNCATE_AT = ["LEGGI ANCHE", "Leggi anche", "Raccomandati per te"]
+  BODY_CLEANING_INLINE      = per-source list of regex patterns (corriere, repubblica, ansa)
+
+Output:        data/articoli.csv updated with body_cleaned
+
+--------------------------------------------------------------------------------
+STEP 3: Extract quotes
+--------------------------------------------------------------------------------
+Script:        extract_quotes.py
+Libraries:     csv, json, re
+Algorithm:     Regex-based quote extraction. Patterns (in order):
+  - «...» (guillemets)
+  - ""...""
+  - \u201c...\u201d (curly double quotes)
+  - "..." (straight double)
+  - '...' (single, with elision handling)
+
+Feature values: QUOTE_PATTERNS (compiled regexes in extract_quotes.py); no config thresholds.
+
+Output:        data/articoli.csv updated with quotes_from_title, quotes_from_body (JSON arrays)
+  Optional:     data/quotes_review.csv (if --export-review-csv)
+
+--------------------------------------------------------------------------------
+STEP 4: Check title quotes (title-quote validation)
+--------------------------------------------------------------------------------
+Script:        check_title_quotes.py
+Libraries:     csv, json, re, difflib (SequenceMatcher)
+               sentence_transformers (SentenceTransformer), numpy (for cosine similarity)
+
+Algorithms and models:
+  1) Exact match: substring of title_quote in body text or in body quotes.
+  2) Normalized match: same after normalize_text (punctuation stripped, whitespace normalized, lowercased; Italian "N%" <-> "N per cento" normalized).
+  3) Fuzzy match: difflib.SequenceMatcher.ratio() on normalized strings.
+     - Sliding window over body text (window length ~1.5 * title quote length, step = L//2).
+     - Comparison to each body quote and best window in body.
+  4) Semantic (paraphrase) check: sentence embeddings + cosine similarity.
+     - Model: SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2") (sentence-transformers).
+     - Body split into segments: body quotes first, then sentence-split body (split on [.!?]); each segment capped at SEMANTIC_SEGMENT_MAX_CHARS.
+     - Encode title quote and all segments; normalize_embeddings=True; similarity = dot product (cosine for normalized vectors).
+
+Feature values (config.py and check_title_quotes.py):
+  FUZZY_MATCH_THRESHOLD_SUSPECT   = 0.85   (ratio >= 0.85 -> suspect)
+  FUZZY_MATCH_THRESHOLD_TRUE     = 0.95   (ratio >= 0.95 -> true)
+  SEMANTIC_PARAPHRASE_THRESHOLD   = 0.60   (cosine >= 0.60 -> suspect, match_type paraphrase)
+  MIN_TITLE_QUOTE_LEN             = 5      (skip shorter title quotes)
+  SEMANTIC_SEGMENT_MAX_CHARS      = 256   (max chars per segment for encoding)
+
+Output:        data/title_quote_validation.csv
+  Columns: url, title_quote, found_in_body (true|false|suspect), match_type (exact|normalized|fuzzy|paraphrase|none), match_similarity, match_location (body_text|quotes_from_body), outcome (manual override)
+
+--------------------------------------------------------------------------------
+STEP 5 (optional): Dashboard / visualizations
+--------------------------------------------------------------------------------
+Script:        viz_results.py
+Libraries:     pandas, numpy, plotly.express (px), plotly.graph_objects (go)
+Algorithm:     Aggregate articoli + title_quote_validation; outcome overrides found_in_body when set; charts (e.g. bar, pie) for found/not found/suspect and per source.
+
+Feature values:
+  OUTPUT_CSV                    = data/articoli.csv
+  TITLE_QUOTE_VALIDATION_CSV     = data/title_quote_validation.csv
+  QUOTES_REVIEW_CSV             = data/quotes_review.csv (optional)
+  DEFAULT_OUTPUT                 = data/results_dashboard.html
+
+Output:        data/results_dashboard.html
+
+--------------------------------------------------------------------------------
+Optional / secondary workflow
+--------------------------------------------------------------------------------
+  apply_outcomes.py: reads data/quotes_review.csv (per-quote outcome: correct|incorrect|unverifiable), aggregates to article level, writes outcome to data/articoli.csv. Not used by the main dashboard.
+
+--------------------------------------------------------------------------------
+Summary: Libraries and key algorithms
+--------------------------------------------------------------------------------
+  feedparser          RSS parsing
+  requests            HTTP
+  beautifulsoup4, lxml HTML parsing
+  difflib.SequenceMatcher  character-level fuzzy similarity (ratio)
+  sentence_transformers    SentenceTransformer, model paraphrase-multilingual-MiniLM-L12-v2
+  numpy               dot product for cosine similarity
+  pandas, plotly      dashboard data and charts
+  re                  regex (cleaning, quote extraction, normalization)
+
+================================================================================
