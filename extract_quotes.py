@@ -1,6 +1,7 @@
 """
 Estrae citazioni da titolo e corpo articolo (body_cleaned o body).
-Usa « », "...", e salva in quotes_from_title e quotes_from_body come JSON array.
+Usa « », ""..."", "...", "..." (curly U+201C/U+201D), "..." (straight), '...',
+e salva in quotes_from_title e quotes_from_body come JSON array.
 Opzionale: esporta CSV per revisione manuale (outcome).
 """
 import csv
@@ -14,10 +15,14 @@ from config import CSV_COLUMNS, OUTPUT_CSV
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Italian typographic quotes and straight double quotes (non-greedy)
+# Order matters: longer/specific delimiters first so ""..."" is not split by "..."
 QUOTE_PATTERNS = [
     re.compile(r"«([^»]*)»"),
+    re.compile(r'""(.*?)""'),
+    re.compile(r"\u201c([^\u201d]*)\u201d"),
     re.compile(r'"([^"]*)"'),
+    # Content allows apostrophe when followed by letter (elision, e.g. c'è) so it's not treated as closing quote
+re.compile(r"(?:^|\s)'((?:[^']|'(?=\w))*)'(?:\s|[.,;:!?)\]]|$)"),
 ]
 
 

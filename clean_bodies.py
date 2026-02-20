@@ -54,15 +54,30 @@ def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _strip_leading_title_if_exact(text: str, title: str) -> str:
+    """If text starts with the exact title (ignoring surrounding whitespace), remove it."""
+    if not title or not text:
+        return text
+    t = title.strip()
+    if not t:
+        return text
+    normalized = text.strip()
+    if normalized.startswith(t):
+        return normalized[len(t) :].strip()
+    return text
+
+
 def clean_body(body: str, source: str, title: str) -> str:
-    """Apply full cleaning pipeline: truncate, strip leading (Corriere), inline remove, normalize."""
+    """Apply full cleaning pipeline: truncate, strip leading (Corriere), inline remove, normalize, strip leading title if exact."""
     if not body:
         return ""
     text = _truncate_at(body)
     if source == "corriere":
         text = _strip_corriere_leading(text, title)
     text = _apply_inline_remove(text, source)
-    return _normalize_whitespace(text)
+    text = _normalize_whitespace(text)
+    text = _strip_leading_title_if_exact(text, title)
+    return text
 
 
 def run():

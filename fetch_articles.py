@@ -83,7 +83,8 @@ def fetch_article(url, source_key):
     return title or "", body or ""
 
 
-def run():
+def run(max_articles_per_feed=None):
+    limit = max_articles_per_feed if max_articles_per_feed is not None else MAX_ARTICLES_PER_FEED
     output_path = os.path.join(os.path.dirname(__file__), OUTPUT_CSV)
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -100,7 +101,7 @@ def run():
                 logger.warning("Feed non valido o vuoto: %s", feed_url)
                 continue
 
-            entries = feed.entries[:MAX_ARTICLES_PER_FEED] if MAX_ARTICLES_PER_FEED else feed.entries
+            entries = feed.entries[:limit] if limit else feed.entries
             for i, entry in enumerate(entries):
                 link = entry.get("link")
                 if not link:
