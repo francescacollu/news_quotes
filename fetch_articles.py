@@ -15,10 +15,11 @@ from bs4 import BeautifulSoup
 
 from config import (
     CSV_COLUMNS,
-    DATA_DIR,
     MAX_ARTICLES_PER_FEED,
+    MIN_BODY_LENGTH,
     NON_ARTICLE_URL_PATH_SEGMENTS,
     OUTPUT_CSV,
+    PAYWALL_PHRASES,
     REQUEST_DELAY_SECONDS,
     SOURCES,
     USER_AGENT,
@@ -93,56 +94,114 @@ def is_non_article_url(url):
     return any(seg.lower() in excluded for seg in segments)
 
 
+def is_paywalled(body, source_key):
+    """True if body looks paywalled: too short or contains source-specific paywall phrases."""
+    if not body or len(body) < MIN_BODY_LENGTH:
+        return True
+    phrases = PAYWALL_PHRASES.get(source_key, [])
+    if not phrases:
+        return False
+    lower = body.lower()
+    return any(p.lower() in lower for p in phrases)
+
+
 def run(max_articles_per_feed=None):
     limit = max_articles_per_feed if max_articles_per_feed is not None else MAX_ARTICLES_PER_FEED
     output_path = os.path.join(os.path.dirname(__file__), OUTPUT_CSV)
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
+    # Carica eventuali articoli esistenti per accumulare nuovi articoli invece di sovrascrivere.
+    existing_rows: list[dict] = []
+    existing_urls: set[str] = set()
+    if os.path.isfile(output_path):
+        with open(output_path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                url = row.get("url") or ""
+                if not url:
+                    continue
+                existing_rows.append(row)
+                existing_urls.add(url)
+        logger.info("Articoli esistenti trovati: %d (URL unici: %d)", len(existing_rows), len(existing_urls))
 
-        for source_key, cfg in SOURCES.items():
-            feed_url = cfg["feed_url"]
-            logger.info("Feed: %s (%s)", source_key, feed_url)
-            feed = feedparser.parse(feed_url)
+    new_rows: list[dict] = []
 
-            if feed.bozo and not feed.entries:
-                logger.warning("Feed non valido o vuoto: %s", feed_url)
+    for source_key, cfg in SOURCES.items():
+        feed_url = cfg["feed_url"]
+        logger.info("Feed: %s (%s)", source_key, feed_url)
+        feed = feedparser.parse(feed_url)
+
+        if feed.bozo and not feed.entries:
+            logger.warning("Feed non valido o vuoto: %s", feed_url)
+            continue
+
+        entries = feed.entries
+        if limit:
+            max_to_try = min(len(entries), limit * 5)
+            entries = entries[:max_to_try]
+        written = 0
+        for i, entry in enumerate(entries):
+            if limit and written >= limit:
+                break
+            link = entry.get("link")
+            if not link:
                 continue
+            if link in existing_urls:
+                logger.info(
+                    "Skip già presente: %s",
+                    link[:70] + "..." if len(link) > 70 else link,
+                )
+                continue
+            if is_non_article_url(link):
+                logger.info("Skip non-article: %s", link[:70] + "..." if len(link) > 70 else link)
+                continue
+            title_feed = entry.get("title") or ""
+            date_str = normalize_date(entry)
 
-            entries = feed.entries[:limit] if limit else feed.entries
-            for i, entry in enumerate(entries):
-                link = entry.get("link")
-                if not link:
-                    continue
-                if is_non_article_url(link):
-                    logger.info("Skip non-article: %s", link[:70] + "..." if len(link) > 70 else link)
-                    continue
-                title_feed = entry.get("title") or ""
-                date_str = normalize_date(entry)
+            title_page, body = fetch_article(link, source_key)
+            # Preferisci titolo dalla pagina se presente, altrimenti dal feed
+            title = title_page if title_page else title_feed
 
-                title_page, body = fetch_article(link, source_key)
-                # Preferisci titolo dalla pagina se presente, altrimenti dal feed
-                title = title_page if title_page else title_feed
-
-                row = {
-                    "url": link,
-                    "source": source_key,
-                    "date": date_str,
-                    "title": title,
-                    "body": body,
-                    "quotes_from_title": "",
-                    "quotes_from_body": "",
-                    "outcome": "",
-                }
-                writer.writerow(row)
-                logger.info("[%s] %s", source_key, link[:60] + "..." if len(link) > 60 else link)
-
+            if is_paywalled(body, source_key):
+                logger.info("Skip paywalled/short: %s", link[:70] + "..." if len(link) > 70 else link)
                 if i < len(entries) - 1:
                     time.sleep(REQUEST_DELAY_SECONDS)
+                continue
 
-    logger.info("Scrittura completata: %s", output_path)
+            row = {
+                "url": link,
+                "source": source_key,
+                "date": date_str,
+                "title": title,
+                "body": body,
+                "body_cleaned": "",
+                "quotes_from_title": "",
+                "quotes_from_body": "",
+                "outcome": "",
+            }
+            new_rows.append(row)
+            existing_urls.add(link)
+            written += 1
+            logger.info("[%s] %s", source_key, link[:60] + "..." if len(link) > 60 else link)
+
+            if i < len(entries) - 1:
+                time.sleep(REQUEST_DELAY_SECONDS)
+
+    # Scrive tutti gli articoli (esistenti + nuovi) in un unico CSV.
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for row in existing_rows:
+            writer.writerow(row)
+        for row in new_rows:
+            writer.writerow(row)
+
+    logger.info(
+        "Scrittura completata: %s (esistenti=%d, nuovi=%d)",
+        output_path,
+        len(existing_rows),
+        len(new_rows),
+    )
 
 
 if __name__ == "__main__":

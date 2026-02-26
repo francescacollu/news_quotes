@@ -64,6 +64,23 @@ def _effective_found_in_body(validation: pd.DataFrame) -> pd.Series:
     return result.fillna(auto).astype(bool)
 
 
+def _non_false_mask(validation: pd.DataFrame) -> pd.Series:
+    """True for matches + suspects (exclude only confirmed not found and automated false)."""
+    if validation.empty or "found_in_body" not in validation.columns:
+        return pd.Series(dtype=bool)
+    fib = validation["found_in_body"].astype(str).str.strip().str.lower()
+    auto_non_false = fib.isin(("true", "suspect"))
+    if OUTCOME_COLUMN not in validation.columns:
+        return auto_non_false
+    outcome = validation[OUTCOME_COLUMN].fillna("").astype(str).str.strip().str.lower()
+    result = auto_non_false.copy()
+    result = result.where(outcome == "", result)
+    result = result.mask(outcome == "confirmed_found", True)
+    result = result.mask(outcome == "confirmed_not_found", False)
+    result = result.mask(outcome == "suspect", True)
+    return result.fillna(auto_non_false).astype(bool)
+
+
 def _validation_with_outlet(validation: pd.DataFrame, articoli: pd.DataFrame) -> pd.DataFrame:
     """Merge validation with articoli to add outlet (source)."""
     if validation.empty or articoli.empty or "url" not in validation.columns or "source" not in articoli.columns:
@@ -108,13 +125,16 @@ def chart_true_quotes_per_outlet(validation: pd.DataFrame, articoli: pd.DataFram
 
 
 def chart_match_type(validation: pd.DataFrame) -> go.Figure:
-    """Pie of match_type: exact, normalized, fuzzy, paraphrase, none."""
+    """Pie of match_type among non-false records (matches + suspects): exact, normalized, fuzzy, paraphrase, none."""
     if validation.empty or "match_type" not in validation.columns:
         return go.Figure().add_annotation(text="No data", showarrow=False)
-    mt = validation["match_type"].fillna("none").astype(str).str.lower()
+    non_false = _non_false_mask(validation)
+    subset = validation.loc[non_false]
+    if subset.empty:
+        return go.Figure().add_annotation(text="No matches or suspects", showarrow=False)
+    mt = subset["match_type"].fillna("none").astype(str).str.lower()
     order = ["exact", "normalized", "fuzzy", "paraphrase", "none"]
     counts = mt.value_counts()
-    # ensure all types appear in fixed order, then any other values
     df = pd.DataFrame({"match_type": order, "count": [counts.get(t, 0) for t in order]})
     other = counts.drop(labels=order, errors="ignore")
     if not other.empty:
@@ -123,7 +143,7 @@ def chart_match_type(validation: pd.DataFrame) -> go.Figure:
     if df.empty:
         return go.Figure().add_annotation(text="No data", showarrow=False)
     total = df["count"].sum()
-    fig = px.pie(df, values="count", names="match_type", title=f"Match type: exact / normalized / fuzzy / paraphrase / none (n={total})")
+    fig = px.pie(df, values="count", names="match_type", title=f"Match type (matches + suspects, n={total}): exact / normalized / fuzzy / paraphrase / none")
     return fig
 
 

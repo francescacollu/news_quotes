@@ -42,6 +42,22 @@ def _strip_corriere_leading(body: str, title: str) -> str:
     return body[idx + len(marker) :].lstrip()
 
 
+def _strip_ilfatto_leading(body: str) -> str:
+    """Remove leading block: 'Ultimo aggiornamento ... title di Redazione X' or '... di Name Surname'. Keep rest."""
+    if not body:
+        return body
+    # Pattern 1: from start through "di Redazione <section>" (e.g. Esteri, Sport)
+    m = re.match(r"^.*?di Redazione\s+\w+\s*", body)
+    if m:
+        return body[m.end() :].lstrip()
+    # Pattern 2: from start through "di <Name> <Surname>" only in first 500 chars
+    head = body[:500]
+    m = re.match(r"^.*?di\s+\w+\s+\w+\s*", head)
+    if m and m.end() <= 500:
+        return body[m.end() :].lstrip()
+    return body
+
+
 def _apply_inline_remove(text: str, source: str) -> str:
     """Apply per-source inline regex removals."""
     patterns = BODY_CLEANING_INLINE.get(source, [])
@@ -74,6 +90,8 @@ def clean_body(body: str, source: str, title: str) -> str:
     text = _truncate_at(body)
     if source == "corriere":
         text = _strip_corriere_leading(text, title)
+    if source == "ilfatto":
+        text = _strip_ilfatto_leading(text)
     text = _apply_inline_remove(text, source)
     text = _normalize_whitespace(text)
     text = _strip_leading_title_if_exact(text, title)

@@ -3,7 +3,7 @@
 
 SOURCES = {
     "corriere": {
-        "feed_url": "https://www.corriere.it/dynamic-feed/rss/section/politica.xml",
+        "feed_url": "https://xml2.corriereobjects.it/feed-hp/homepage.xml",
         "title_selector": "h1",
         "body_selector": ".story-body",
     },
@@ -16,6 +16,11 @@ SOURCES = {
         "feed_url": "https://www.ansa.it/sito/ansait_rss.xml",
         "title_selector": "h1",
         "body_selector": "[itemprop='articleBody']",
+    },
+    "ilfatto": {
+        "feed_url": "https://www.ilfattoquotidiano.it/feed/",
+        "title_selector": "h1",
+        "body_selector": "article",
     },
 }
 
@@ -41,6 +46,8 @@ BODY_CLEANING_TRUNCATE_AT = [
     "LEGGI ANCHE",
     "Leggi anche",
     "Raccomandati per te",
+    "Hai già letto",
+    "Hai gia letto",
 ]
 
 # Per-source inline phrases to remove (regex or literal); applied after truncation
@@ -70,16 +77,17 @@ BODY_CLEANING_INLINE = {
         r"^Live\s+",
     ],
     "ansa": [],
+    "ilfatto": [],
 }
 
 DATA_DIR = "data"
 OUTPUT_CSV = "data/articoli.csv"
 
 # URL path segments that identify non-article pages (video, podcast, gallery); skipped at fetch
-NON_ARTICLE_URL_PATH_SEGMENTS = ("videogallery", "podcast", "fotogallery")
+NON_ARTICLE_URL_PATH_SEGMENTS = ("videogallery", "podcast", "fotogallery", "video")
 
-# Limite articoli per feed (None = nessun limite)
-MAX_ARTICLES_PER_FEED = 30
+# Numero di articoli da ottenere per feed (scraping continua fino a raggiungere questo numero; None = nessun limite)
+MAX_ARTICLES_PER_FEED = 50
 
 # Secondi di pausa tra una richiesta HTTP e l'altra
 REQUEST_DELAY_SECONDS = 1.5
@@ -92,3 +100,19 @@ SEMANTIC_PARAPHRASE_THRESHOLD = 0.60
 TITLE_QUOTE_VALIDATION_CSV = "data/title_quote_validation.csv"
 # Minimum body length (chars) to include article in title-quote validation; shorter = subscriber-only catenaccio
 MIN_BODY_LENGTH = 400
+
+# Per-source literal phrases that indicate paywalled/teaser-only article (substring match, case-insensitive)
+PAYWALL_PHRASES = {
+    "corriere": [
+        "Il servizio è dedicato agli utenti registrati",
+        "Registrati in 1 minuto",
+        "I tuoi preferiti Salva questo articolo",
+    ],
+    "repubblica": [
+        "riservato agli abbonati",
+        "Abbonati per leggere",
+        "L'ascolto",
+    ],
+    "ansa": [],
+    "ilfatto": [],
+}
